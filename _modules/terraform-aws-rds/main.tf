@@ -1,0 +1,200 @@
+data "aws_iam_policy_document" "db-monitor-sts" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["monitoring.rds.amazonaws.com"]
+    }
+  }
+}
+
+# For allowing VPC level database access for containers
+data "aws_vpc" "selected" {
+  id = var.vpc_id
+}
+
+data "aws_iam_policy" "db-monitor" {
+  name = "AmazonRDSEnhancedMonitoringRole"
+}
+
+resource "aws_iam_role" "db-monitor" {
+  description = "Role to enable Enhanced RDS Monitoring"
+
+  assume_role_policy  = data.aws_iam_policy_document.db-monitor-sts.json
+  managed_policy_arns = [data.aws_iam_policy.db-monitor.arn]
+
+  name_prefix = "db-monitoring"
+  path = join("/", [
+    "",
+    lookup(var.project_meta, "name"),
+    var.deployment_environment,
+    "rds-role",
+    ""
+  ])
+}
+
+resource "aws_db_subnet_group" "database" {
+  description = "Subnet group to host the database in"
+
+  name = join("-", [
+    lookup(var.project_meta, "name"),
+    var.deployment_environment,
+    "db-subnet"
+    ]
+  )
+
+  subnet_ids = var.subnet_ids
+}
+
+resource "aws_security_group" "database" {
+  description = "Attach to database instance and app services"
+
+  name_prefix = join("-", [
+    lookup(var.project_meta, "name"),
+    var.deployment_environment,
+    "rds",
+    "db-subnet",
+    ]
+  )
+
+  vpc_id = var.vpc_id
+
+  ingress {
+    description = "Allow from self"
+    from_port   = lookup(var.database, "port")
+    to_port     = lookup(var.database, "port")
+    protocol    = "tcp"
+    self        = true
+  }
+
+  ingress {
+    description = "Allow traffic from app server"
+    from_port   = lookup(var.database, "port")
+    to_port     = lookup(var.database, "port")
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.selected.cidr_block]
+  }
+
+  # ingress {
+  #   description = "Allow traffic from app server (IPv6)"
+  #   from_port   = lookup(var.database, "port")
+  #   to_port     = lookup(var.database, "port")
+  #   protocol    = "tcp"
+  #   ipv6_cidr_blocks = [ data.aws_vpc.selected.ipv6_cidr_block ]  # Replace with actual IPv6 CIDR block
+  # }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "Access to Database"
+  }
+}
+
+resource "random_password" "database" {
+  length  = lookup(var.database, "password_length")
+  special = false
+}
+
+resource "random_pet" "db" {
+}
+
+resource "aws_rds_cluster" "database" {
+  cluster_identifier = join("-", [
+    lookup(var.project_meta, "name"),
+    "rds",
+    var.deployment_environment
+    ]
+  )
+  database_name                   = lookup(var.database, "name")
+  master_username                 = lookup(var.database, "admin_user")
+  master_password                 = var.master_password != "" ? var.master_password : random_password.database.result
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group.database.name
+
+  engine         = "aurora-postgresql"
+  engine_mode    = "provisioned"
+  engine_version = lookup(var.database, "engine_version")
+
+  serverlessv2_scaling_configuration {
+    max_capacity = lookup(var.serverless_capacity, "maximum")
+    min_capacity = lookup(var.serverless_capacity, "minimum")
+  }
+
+  copy_tags_to_snapshot = true
+
+  skip_final_snapshot = lookup(var.backup, "skip_final_snapshot")
+  final_snapshot_identifier = join("-", [
+    lookup(var.backup, "final_snapshot_identifier"),
+    formatdate("YYYY-MM-DD-hh-mm", timestamp())
+    ]
+  )
+
+  backup_retention_period = lookup(var.backup, "retention_days")
+
+  vpc_security_group_ids = [aws_security_group.database.id]
+  db_subnet_group_name   = aws_db_subnet_group.database.name
+  network_type           = var.network_type
+
+  apply_immediately   = true
+  deletion_protection = var.deletion_protection
+
+  lifecycle {
+    ignore_changes = [
+      availability_zones,
+      final_snapshot_identifier,
+    ]
+  }
+}
+
+resource "aws_rds_cluster_instance" "serverless_writer" {
+  cluster_identifier      = aws_rds_cluster.database.id
+  db_parameter_group_name = aws_db_parameter_group.serverless_writer.name
+  identifier_prefix = join("-", [
+    lookup(var.project_meta, "name"),
+    var.deployment_environment
+    ]
+  )
+
+  engine               = aws_rds_cluster.database.engine
+  engine_version       = aws_rds_cluster.database.engine_version
+  instance_class       = "db.serverless"
+  db_subnet_group_name = aws_rds_cluster.database.db_subnet_group_name
+  apply_immediately    = aws_rds_cluster.database.apply_immediately
+
+  monitoring_role_arn                   = lookup(var.monitoring, "interval_seconds") == 0 ? null : aws_iam_role.db-monitor.arn
+  monitoring_interval                   = lookup(var.monitoring, "interval_seconds")
+  performance_insights_enabled          = lookup(var.monitoring, "performance_insights_enabled")
+  performance_insights_retention_period = lookup(var.monitoring, "performance_insights_retention_days")
+
+  publicly_accessible = var.public_access
+
+  /**
+  lifecycle {
+    prevent_destroy = var.deletion_protection
+  }
+  **/
+}
+
+resource "aws_secretsmanager_secret" "db-credentials-password" {
+  description = "Database connection parameters and access credentials"
+
+  name_prefix = join("/", [
+    lookup(var.project_meta, "name"),
+    var.deployment_environment,
+    "rds",
+    "POSTGRES_PASSWORD"
+    ]
+  )
+}
+
+resource "aws_secretsmanager_secret_version" "db-credentials-password" {
+  secret_id     = aws_secretsmanager_secret.db-credentials-password.id
+  secret_string = aws_rds_cluster.database.master_password
+}
+
