@@ -1,0 +1,17 @@
+locals {
+  account_name   = get_env("AWS_ACCOUNT_NAME", "anilrajrimal")
+  aws_profile    = get_env("AWS_PROFILE", "devops")
+  aws_region     = get_env("AWS_REGION", "ap-south-1")
+  team           = get_env("INFRA_TEAM", "devops")
+  owner          = get_env("INFRA_OWNER", "devops")
+  environment    = get_env("INFRA_ENVIRONMENT", "dev")
+  project        = get_env("INFRA_PROJECT", "formflow-dev")
+  application    = get_env("INFRA_APPLICATION", "platform")
+  short_name     = get_env("INFRA_PROJECT_SHORT_NAME", "ff")
+  maintainer     = get_env("INFRA_MAINTAINER", "anilrajrimal@gmail.com")
+  url            = get_env("INFRA_URL", "https://anilrajrimal.com.np")
+  documentation  = get_env("INFRA_DOCS_URL", "https://anilrajrimal.com.np/docs/")
+  IaC_Management = get_env("INFRA_IAC_MANAGER", "Terraform/Terragrunt")
+  cost_center    = get_env("INFRA_ENABLE_COST_CENTER", "True")
+  version        = get_env("INFRA_APP_VERSION", "1.0.0")
+}
