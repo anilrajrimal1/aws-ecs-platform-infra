@@ -1,0 +1,195 @@
+image: alpine/terragrunt:1.9.5
+
+options:
+  max-time: 60
+
+definitions:
+  caches:
+    terragrunt: .terragrunt-cache
+
+pipelines:
+  custom:
+    infrastructure-deploy:
+    - variables:
+      - name: ENVIRONMENT_NAME
+        allowed-values:
+        - "dev"
+        default: "dev"
+
+      - name: ENVIRONMENT_TYPE
+        allowed-values:
+        - "non-purgeable"
+        - "purgeable"
+        default: "purgeable"
+
+      - name: MODULE_NAME
+        allowed-values:
+        - "vpc"
+        - "rds"
+        - "redis-main"
+        - "redis-cache"
+        - "efs"
+        - "ecr"
+        - "alb"
+        - "secrets-n-roles"
+        - "ec2"
+        - "s3"
+        - "s3-fe"
+        - "s3-forms-fe"
+        - "cloudfront-app"
+        - "cloudfront-forms"
+        - "ecs-web"
+        - "ecs-enketo"
+        - "ecs-service"
+        default: "ecs-web"
+
+    - step:
+        name: Terragrunt Plan
+        image: alpine/terragrunt:1.9.5
+        size: 2x
+        caches:
+        - terragrunt
+        script:
+        - export MODULE_PATH="deployments/${ENVIRONMENT_NAME}/${ENVIRONMENT_TYPE}/${MODULE_NAME}"
+        - echo "Checking module at ${MODULE_PATH}"
+        - |
+          if [ ! -d "$MODULE_PATH" ]; then
+            echo "ERROR: Module '${MODULE_NAME}' does not exist in '${ENVIRONMENT_TYPE}'"
+            if [ "${ENVIRONMENT_TYPE}" = "non-purgeable" ]; then
+              echo "Available non-purgeable modules: vpc, rds, redis-main, redis-cache, efs, ecr, alb, secrets-n-roles, ec2, s3, s3-fe, s3-forms-fe, cloudfront-app, cloudfront-forms"
+            else
+              echo "Available purgeable modules: ecs-web, ecs-enketo, ecs-service"
+            fi
+            exit 1
+          fi
+        - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+        - export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
+        - cd "$MODULE_PATH"
+        - terragrunt init --terragrunt-non-interactive
+        - terragrunt plan -out=tfplan
+        - |
+          PLAN_FILE=$(find . -name "tfplan" -type f 2>/dev/null | head -n 1)
+          if [ -z "$PLAN_FILE" ]; then
+            echo "Plan file not found"
+            exit 1
+          fi
+          PLAN_DIR=$(dirname "$PLAN_FILE")
+          LOCK_FILE="${PLAN_DIR}/.terraform.lock.hcl"
+          mkdir -p ${BITBUCKET_CLONE_DIR}/terraform-artifacts
+          cp "$PLAN_FILE" ${BITBUCKET_CLONE_DIR}/terraform-artifacts/tfplan
+          if [ -f "$LOCK_FILE" ]; then
+            cp "$LOCK_FILE" ${BITBUCKET_CLONE_DIR}/terraform-artifacts/.terraform.lock.hcl
+            echo "Lock file copied"
+          else
+            echo "Warning: Lock file not found at $LOCK_FILE"
+          fi
+        artifacts:
+        - terraform-artifacts/**
+
+    - step:
+        name: Terragrunt Apply
+        image: alpine/terragrunt:1.9.5
+        size: 2x
+        trigger: manual
+        depends-on:
+        - Terragrunt Plan
+        caches:
+        - terragrunt
+        script:
+        - export MODULE_PATH="deployments/${ENVIRONMENT_NAME}/${ENVIRONMENT_TYPE}/${MODULE_NAME}"
+        - |
+          if [ ! -d "$MODULE_PATH" ]; then
+            echo "ERROR: Module '${MODULE_NAME}' does not exist in '${ENVIRONMENT_TYPE}'"
+            exit 1
+          fi
+        - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+        - export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
+        - cd "$MODULE_PATH"
+        - |
+          if [ -f "${BITBUCKET_CLONE_DIR}/terraform-artifacts/tfplan" ]; then
+            terragrunt init --terragrunt-non-interactive
+            terragrunt apply --terragrunt-non-interactive "${BITBUCKET_CLONE_DIR}/terraform-artifacts/tfplan"
+          else
+            echo "Plan file not found, run plan first"
+            exit 1
+          fi
+
+    infrastructure-destroy:
+    - variables:
+      - name: ENVIRONMENT_NAME
+        allowed-values:
+        - "dev"
+        default: "dev"
+
+      - name: ENVIRONMENT_TYPE
+        allowed-values:
+        - "non-purgeable"
+        - "purgeable"
+        default: "purgeable"
+
+      - name: MODULE_NAME
+        allowed-values:
+        - "vpc"
+        - "rds"
+        - "redis-main"
+        - "redis-cache"
+        - "efs"
+        - "ecr"
+        - "alb"
+        - "secrets-n-roles"
+        - "ec2"
+        - "s3"
+        - "s3-fe"
+        - "s3-forms-fe"
+        - "cloudfront-app"
+        - "cloudfront-forms"
+        - "ecs-web"
+        - "ecs-enketo"
+        - "ecs-service"
+        default: "ecs-web"
+
+    - step:
+        name: Validate Module Path
+        image: alpine
+        size: 2x
+        script:
+        - export MODULE_PATH="deployments/${ENVIRONMENT_NAME}/${ENVIRONMENT_TYPE}/${MODULE_NAME}"
+        - |
+          NON_PURGEABLE="vpc rds redis-main redis-cache efs ecr alb secrets-n-roles ec2 s3 s3-fe s3-forms-fe cloudfront-app cloudfront-forms"
+          PURGEABLE="ecs-web ecs-enketo ecs-service"
+
+          if [ "${ENVIRONMENT_TYPE}" = "non-purgeable" ]; then
+            if ! echo "$NON_PURGEABLE" | grep -qw "${MODULE_NAME}"; then
+              echo "ERROR: ${MODULE_NAME} is not a non-purgeable module"
+              exit 1
+            fi
+          elif [ "${ENVIRONMENT_TYPE}" = "purgeable" ]; then
+            if ! echo "$PURGEABLE" | grep -qw "${MODULE_NAME}"; then
+              echo "ERROR: ${MODULE_NAME} is not a purgeable module"
+              exit 1
+            fi
+          fi
+        - |
+          if [ ! -d "$MODULE_PATH" ]; then
+            echo "ERROR: Module path ${MODULE_PATH} does not exist"
+            exit 1
+          fi
+        - echo "Validated ${MODULE_PATH}"
+
+    - step:
+        name: Terragrunt Destroy
+        image: alpine/terragrunt:1.9.5
+        trigger: manual
+        size: 2x
+        caches:
+        - terragrunt
+        script:
+        - export MODULE_PATH="deployments/${ENVIRONMENT_NAME}/${ENVIRONMENT_TYPE}/${MODULE_NAME}"
+        - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+        - export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-south-1}
+        - cd "$MODULE_PATH"
+        - terragrunt init --terragrunt-non-interactive
+        - terragrunt destroy --terragrunt-non-interactive --auto-approve

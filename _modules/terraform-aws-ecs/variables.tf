@@ -443,7 +443,7 @@ variable "project_meta" {
 variable "s3_bucket_name" {
   type        = string
   description = "S3 Bucket to store state files for terraform"
-  default     = "terraform-statefiles"
+  default     = "platform-terraform-state"
 }
 
 # variables.tf

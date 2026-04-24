@@ -1,0 +1,18 @@
+# Terragrunt cache
+**/.terragrunt-cache/
+**/.terragrunt*
+
+# Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+*.tfplan
+**/*.tfplan
+
+# Secrets and keys
+.env
+infra.env
+*.pem
+
+# OS
+.DS_Store
