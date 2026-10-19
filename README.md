@@ -251,3 +251,20 @@ Required Bitbucket repository variables:
 - Add Infracost to the CI pipeline for automated cost estimation
 - Enable VPC Flow Logs with CloudWatch retention policies
 - Add RDS cross-region snapshot copy for disaster recovery
+
+## Credits and Licensing
+
+Original code in this repository is released under the [MIT License](LICENSE).
+
+Several modules in `_modules/` are adapted from the [Humanitarian OpenStreetMap Team](https://github.com/hotosm)'s Terraform modules (original author: eternaltyro). They keep their upstream licenses, and changes to them are published here:
+
+| Module | Upstream | License |
+| --- | --- | --- |
+| `terraform-aws-alb` | [hotosm/terraform-aws-alb](https://github.com/hotosm/terraform-aws-alb) | GNU LGPL (license files included in the module) |
+| `terraform-aws-ecs` | [hotosm/terraform-aws-ecs](https://github.com/hotosm/terraform-aws-ecs) | GNU LGPL (license files included in the module) |
+| `terraform-aws-rds` | [hotosm/terraform-aws-rds](https://github.com/hotosm/terraform-aws-rds) | GNU LGPL (license files included in the module) |
+| `terraform-aws-vpc` | [hotosm/terraform-aws-vpc](https://github.com/hotosm/terraform-aws-vpc) | GNU LGPL (license files included in the module) |
+| `terraform-aws-ec2` | [hotosm/terraform-aws-ec2](https://github.com/hotosm/terraform-aws-ec2) | No license file upstream |
+| `terraform-aws-s3` | [hotosm/terraform-aws-s3](https://github.com/hotosm/terraform-aws-s3) | No license file upstream |
+
+The `cloudfront`, `ecr`, `efs`, `redis` and `secrets-n-roles` modules are original to this repository.
